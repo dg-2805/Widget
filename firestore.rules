@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isMember(spaceId) {
+      return signedIn()
+        && request.auth.uid in get(/databases/$(database)/documents/spaces/$(spaceId)).data.memberIds;
+    }
+    match /spaces/{spaceId} {
+      // A person with the shared code needs to fetch this one document to
+      // join. List queries remain blocked, so spaces cannot be enumerated.
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.memberIds.hasOnly([request.auth.uid]);
+      allow update: if isMember(spaceId)
+        // One-time migration path for spaces created before memberIds existed.
+        || (signedIn()
+          && !resource.data.keys().hasAll(['memberIds'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds'])
+          && request.resource.data.memberIds.hasOnly([request.auth.uid]))
+        || (signedIn()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds'])
+          && request.resource.data.memberIds.size() == resource.data.memberIds.size() + 1
+          && request.resource.data.memberIds.hasAll(resource.data.memberIds)
+          && request.resource.data.memberIds.hasAny([request.auth.uid]));
+      match /{document=**} {
+        allow read, write: if isMember(spaceId);
+      }
+    }
+  }
+}

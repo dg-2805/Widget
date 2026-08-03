@@ -9,12 +9,17 @@ import 'firebase_options.dart';
 import 'core/theme/app_theme.dart';
 import 'providers/app_state.dart';
 import 'services/notification_service.dart';
+import 'services/widget_background_service.dart';
 import 'core/widgets/cute_widgets.dart';
 import 'features/home/presentation/home_screen.dart';
+import 'features/hug/presentation/need_a_hug_screen.dart';
+import 'features/pairing/presentation/pairing_screen.dart';
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await WidgetBackgroundService.initialize();
 
   final appState = AppState();
 
@@ -32,6 +37,17 @@ Future<void> main() async {
 }
 
 Future<void> _bootstrap(AppState appState) async {
+  // Local reminders must not depend on Firebase/Auth being available. In a
+  // release build an offline or delayed sign-in previously prevented their
+  // schedules and Android permission requests from ever being registered.
+  try {
+    await NotificationService.instance.init();
+  } catch (error, stack) {
+    debugPrint('Notification initialization failed: $error');
+    debugPrintStack(stackTrace: stack);
+    await NotificationService.recordInitializationError(error, stack);
+  }
+
   try {
     await AuthService.signInAnonymously();
   } catch (e, s) {
@@ -40,15 +56,6 @@ Future<void> _bootstrap(AppState appState) async {
   }
 
   await appState.init();
-
-  unawaited(
-    NotificationService.instance.init().catchError(
-      (Object error, StackTrace stack) {
-        debugPrint('Notification initialization failed: $error');
-        debugPrintStack(stackTrace: stack);
-      },
-    ),
-  );
 }
 
 class OurSpaceApp extends StatelessWidget {
@@ -63,8 +70,12 @@ class OurSpaceApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.forTwilight(state.twilight),
       home: DreamyBackground(
-        isDay: state.isDay,
-        child: state.isInitializing ? const _LoadingScreen() : const HomeScreen(),
+        twilight: state.twilight,
+        child: state.isInitializing
+            ? const _LoadingScreen()
+            : state.isPaired
+                ? const HomeScreen()
+                : const PairingScreen(),
       ),
     );
   }

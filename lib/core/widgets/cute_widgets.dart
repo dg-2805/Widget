@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
+import '../twilight/twilight_state.dart';
 
 class DreamyBackground extends StatelessWidget {
-  final bool isDay;
+  final TwilightState twilight;
   final Widget child;
-  const DreamyBackground({super.key, required this.isDay, required this.child});
+  const DreamyBackground({super.key, required this.twilight, required this.child});
 
   @override
   Widget build(BuildContext context) {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 500),
       curve: Curves.easeOutCubic,
-      color: Theme.of(context).scaffoldBackgroundColor,
+      color: twilight.backgroundBottom,
       child: child,
     );
   }

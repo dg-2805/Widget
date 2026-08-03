@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -20,6 +21,7 @@ import android.graphics.Typeface
 import android.os.Build
 import android.os.BatteryManager
 import android.text.TextPaint
+import android.text.TextUtils
 import android.util.TypedValue
 import android.widget.RemoteViews
 import es.antonborri.home_widget.HomeWidgetLaunchIntent
@@ -41,6 +43,8 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
             ACTION_REFRESH,
             Intent.ACTION_TIME_CHANGED,
             Intent.ACTION_TIMEZONE_CHANGED,
+            Intent.ACTION_POWER_CONNECTED,
+            Intent.ACTION_POWER_DISCONNECTED,
             Intent.ACTION_BOOT_COMPLETED -> {
                 updateAllWidgets(context)
                 scheduleNextRefresh(context)
@@ -88,9 +92,10 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
         val now = Calendar.getInstance()
         val battery = batterySnapshot(context)
         val phase = TwilightPhase.fromHour(now.get(Calendar.HOUR_OF_DAY))
-        val count = prefs.getInt("twilights_together", countTwilightsTogether(now))
+        val count = prefs.getInt("days_together", countTwilightsTogether(now))
         val comfort = prefs.getString("comfort_message", defaultComfortMessage(phase)).orEmpty()
         val pandaLabel = prefs.getString("panda_label", defaultPandaLabel(phase, battery.isCharging)).orEmpty()
+        val latestNote = prefs.getString("latest_note", "no notes yet...").orEmpty()
         val batteryLevel = prefs.getInt("battery_level", battery.level)
         val isCharging = prefs.getBoolean("is_charging", battery.isCharging)
         return WidgetSnapshot(
@@ -98,6 +103,7 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
             count = count,
             comfortMessage = comfort.ifBlank { defaultComfortMessage(phase) },
             pandaLabel = pandaLabel.ifBlank { defaultPandaLabel(phase, isCharging) },
+            latestNote = latestNote.ifBlank { "no notes yet..." },
             batteryLevel = batteryLevel,
             isCharging = isCharging,
             surpriseIndex = count % 3,
@@ -111,15 +117,22 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
         snapshot: WidgetSnapshot,
     ): Bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
         val canvas = Canvas(bitmap)
-        drawBackground(canvas, width, height, snapshot.phase)
+        drawBackground(context, canvas, width, height, snapshot)
         drawAtmosphere(canvas, width, height, snapshot.phase)
         drawCalendar(canvas, width, height, snapshot)
-        drawPandaPanel(canvas, width, height, snapshot)
-        drawSurprise(canvas, width, height, snapshot)
-        drawComfort(canvas, width, height, snapshot)
+        drawTodayNote(canvas, width, height, snapshot)
     }
 
-    private fun drawBackground(canvas: Canvas, width: Int, height: Int, phase: TwilightPhase) {
+    private fun drawBackground(context: Context, canvas: Canvas, width: Int, height: Int, snapshot: WidgetSnapshot) {
+        loadFlutterAssetBitmap(context, backgroundAssetPath(Calendar.getInstance(), snapshot.isCharging))?.let {
+            drawCenterCrop(canvas, it, width, height)
+        } ?: run {
+            val fallback = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = LinearGradient(0f, 0f, 0f, height.toFloat(), intArrayOf(snapshot.phase.topColor, snapshot.phase.bottomColor), null, Shader.TileMode.CLAMP)
+            }
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fallback)
+        }
+        val phase = snapshot.phase
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             shader = LinearGradient(
                 0f,
@@ -131,7 +144,7 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
                 Shader.TileMode.CLAMP,
             )
         }
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint.apply { alpha = 60 })
         val vignette = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             shader = RadialGradient(
                 width / 2f,
@@ -179,12 +192,15 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
 
     private fun drawCalendar(canvas: Canvas, width: Int, height: Int, snapshot: WidgetSnapshot) {
         val digits = max(snapshot.count, 0).toString()
-        val gap = width * 0.010f
-        val tile = min(height * 0.23f, (width * 0.50f - gap * (digits.length - 1)) / digits.length)
+        val gap = width * 0.014f
+        // Bigger tiles than before — this is now the focal element.
+        val tile = min(height * 0.30f, (width * 0.62f - gap * (digits.length - 1)) / digits.length)
         val rowWidth = digits.length * tile + (digits.length - 1) * gap
         val left = (width - rowWidth) / 2f
-        val top = height * 0.08f
-        val card = RectF(width * 0.08f, top, width * 0.92f, top + tile * 1.04f)
+        // Vertically centered band instead of hugging the top.
+        val top = height * 0.18f
+        val cardPadding = tile * 0.12f
+        val card = RectF(width * 0.08f, top - cardPadding, width * 0.92f, top + tile + cardPadding)
         val cardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             shader = LinearGradient(
                 card.left,
@@ -195,10 +211,11 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
                 null,
                 Shader.TileMode.CLAMP,
             )
+            alpha = 205
         }
         val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(88, 26, 12, 23) }
-        canvas.drawRoundRect(RectF(card).apply { offset(0f, tile * 0.04f) }, tile * 0.14f, tile * 0.14f, shadow)
-        canvas.drawRoundRect(card, tile * 0.14f, tile * 0.14f, cardPaint)
+        canvas.drawRoundRect(RectF(card).apply { offset(0f, tile * 0.05f) }, tile * 0.16f, tile * 0.16f, shadow)
+        canvas.drawRoundRect(card, tile * 0.16f, tile * 0.16f, cardPaint)
 
         val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             shader = RadialGradient(
@@ -210,47 +227,42 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
                 Shader.TileMode.CLAMP,
             )
         }
-        canvas.drawRoundRect(card, tile * 0.14f, tile * 0.14f, glow)
+        canvas.drawRoundRect(card, tile * 0.16f, tile * 0.16f, glow)
 
         val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = snapshot.phase.accentColor
-            strokeWidth = max(1f, tile * 0.026f)
+            strokeWidth = max(1f, tile * 0.028f)
         }
-        canvas.drawLine(card.left + tile * 0.18f, card.top + tile * 0.13f, card.right - tile * 0.18f, card.top + tile * 0.13f, accent)
+        canvas.drawLine(card.left + tile * 0.20f, card.top + tile * 0.16f, card.right - tile * 0.20f, card.top + tile * 0.16f, accent)
 
         val numeral = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = snapshot.phase.numeralColor
             typeface = Typeface.create("sans-serif", Typeface.BOLD)
             textAlign = Paint.Align.CENTER
-            textSize = tile * 0.54f
+            textSize = tile * 0.58f
         }
         digits.forEachIndexed { index, digit ->
             val x = left + index * (tile + gap)
             val rect = RectF(x, top, x + tile, top + tile)
-            val radius = tile * 0.16f
-            val tilePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = snapshot.phase.tileColor }
+            val radius = tile * 0.18f
+            val tilePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = snapshot.phase.tileColor
+                alpha = 225
+            }
             val topRim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = snapshot.phase.rimColor
-                strokeWidth = max(1f, tile * 0.03f)
+                strokeWidth = max(1f, tile * 0.032f)
             }
             canvas.drawRoundRect(rect, radius, radius, tilePaint)
             canvas.drawLine(x + tile * 0.14f, top + tile * 0.08f, x + tile * 0.86f, top + tile * 0.08f, topRim)
             canvas.drawLine(x + tile * 0.14f, top + tile * 0.93f, x + tile * 0.86f, top + tile * 0.93f, topRim)
-            val baseline = top + tile * 0.71f - (numeral.descent() + numeral.ascent()) / 2f
+            val baseline = top + tile / 2f - (numeral.descent() + numeral.ascent()) / 2f
             canvas.drawText(digit.toString(), x + tile / 2f, baseline, numeral)
         }
 
-        val caption = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = snapshot.phase.captionColor
-            textAlign = Paint.Align.CENTER
-            textSize = min(width * 0.06f, height * 0.11f)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            letterSpacing = 0.04f
-        }
-        canvas.drawText("Twilights Together", width / 2f, card.bottom + caption.textSize * 0.85f, caption)
     }
 
-    private fun drawPandaPanel(canvas: Canvas, width: Int, height: Int, snapshot: WidgetSnapshot) {
+    private fun drawPandaPanel(context: Context, canvas: Canvas, width: Int, height: Int, snapshot: WidgetSnapshot) {
         val card = RectF(width * 0.08f, height * 0.52f, width * 0.56f, height * 0.90f)
         val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(80, 17, 9, 16) }
         canvas.drawRoundRect(RectF(card).apply { offset(0f, height * 0.03f) }, 28f, 28f, shadow)
@@ -267,25 +279,35 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
         }
         canvas.drawRoundRect(card, 28f, 28f, panelPaint)
 
+        val chargingArtwork = if (snapshot.isCharging) {
+            loadOptionalDrawableBitmap(context, "widget_panda_charging_star")
+        } else {
+            null
+        }
         val pandaCenterX = card.centerX() - 6f
         val pandaCenterY = card.centerY() + 4f
-        val body = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(42, 32, 23, 35) }
-        canvas.drawCircle(pandaCenterX, pandaCenterY, card.width() * 0.17f, outline)
-        canvas.drawCircle(pandaCenterX, pandaCenterY, card.width() * 0.165f, body)
-        canvas.drawCircle(pandaCenterX - 20, pandaCenterY - 20, card.width() * 0.055f, Color.BLACK.paint())
-        canvas.drawCircle(pandaCenterX + 20, pandaCenterY - 20, card.width() * 0.055f, Color.BLACK.paint())
-        canvas.drawOval(
-            RectF(pandaCenterX - 36, pandaCenterY - 32, pandaCenterX - 18, pandaCenterY - 4),
-            Color.BLACK.paint(),
-        )
-        canvas.drawOval(
-            RectF(pandaCenterX + 18, pandaCenterY - 32, pandaCenterX + 36, pandaCenterY - 4),
-            Color.BLACK.paint(),
-        )
-        canvas.drawCircle(pandaCenterX - 8, pandaCenterY - 6, 4f, Color.BLACK.paint())
-        canvas.drawCircle(pandaCenterX + 8, pandaCenterY - 6, 4f, Color.BLACK.paint())
-        canvas.drawCircle(pandaCenterX, pandaCenterY + 6, 3.2f, Color.BLACK.paint())
+        if (chargingArtwork != null) {
+            val target = RectF(card.left + card.width() * 0.13f, card.top + card.height() * 0.09f, card.right - card.width() * 0.13f, card.bottom - card.height() * 0.18f)
+            canvas.drawBitmap(chargingArtwork, null, target, Paint(Paint.FILTER_BITMAP_FLAG))
+        } else {
+            val body = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+            val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(42, 32, 23, 35) }
+            canvas.drawCircle(pandaCenterX, pandaCenterY, card.width() * 0.17f, outline)
+            canvas.drawCircle(pandaCenterX, pandaCenterY, card.width() * 0.165f, body)
+            canvas.drawCircle(pandaCenterX - 20, pandaCenterY - 20, card.width() * 0.055f, Color.BLACK.paint())
+            canvas.drawCircle(pandaCenterX + 20, pandaCenterY - 20, card.width() * 0.055f, Color.BLACK.paint())
+            canvas.drawOval(
+                RectF(pandaCenterX - 36, pandaCenterY - 32, pandaCenterX - 18, pandaCenterY - 4),
+                Color.BLACK.paint(),
+            )
+            canvas.drawOval(
+                RectF(pandaCenterX + 18, pandaCenterY - 32, pandaCenterX + 36, pandaCenterY - 4),
+                Color.BLACK.paint(),
+            )
+            canvas.drawCircle(pandaCenterX - 8, pandaCenterY - 6, 4f, Color.BLACK.paint())
+            canvas.drawCircle(pandaCenterX + 8, pandaCenterY - 6, 4f, Color.BLACK.paint())
+            canvas.drawCircle(pandaCenterX, pandaCenterY + 6, 3.2f, Color.BLACK.paint())
+        }
 
         val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = snapshot.phase.captionColor
@@ -296,9 +318,9 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
         canvas.drawText(snapshot.pandaLabel, card.centerX(), card.bottom - height * 0.07f, label)
 
         // Pinterest Asset Needed
-        // Purpose: Panda companion illustration for the widget
-        // Suggested Search: "soft watercolor panda companion"
-        // Asset Path: assets/images/panda/widget_panda.png
+        // Purpose: Charging panda holding a glowing star for the widget icon
+        // Suggested Search: "soft watercolor panda holding a glowing star"
+        // Asset Path: android/app/src/main/res/drawable/widget_panda_charging_star.png
         // Aspect Ratio: 1:1
     }
 
@@ -346,17 +368,26 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
         canvas.drawCircle(x, y, r * 0.44f, center)
     }
 
-    private fun drawComfort(canvas: Canvas, width: Int, height: Int, snapshot: WidgetSnapshot) {
-        val card = RectF(width * 0.60f, height * 0.60f, width * 0.92f, height * 0.89f)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(96, 22, 12, 27) }
+    private fun drawTodayNote(canvas: Canvas, width: Int, height: Int, snapshot: WidgetSnapshot) {
+        // Positioned relative to where the calendar card now ends (~0.24 top +
+        // ~0.30*1.14 tile height + caption), so it always sits just below it
+        // regardless of digit count / tile sizing.
+        val noteTop = height * 0.62f
+        val noteBottom = height * 0.90f
+        val card = RectF(width * 0.08f, noteTop, width * 0.92f, noteBottom)
+        val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(88, 12, 8, 18) }
+        canvas.drawRoundRect(RectF(card).apply { offset(0f, height * 0.02f) }, 22f, 22f, shadow)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(190, 255, 250, 239) }
         canvas.drawRoundRect(card, 22f, 22f, paint)
         val message = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            textSize = max(12f, width * 0.032f)
+            color = Color.rgb(72, 50, 43)
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+            textSize = max(15f, width * 0.046f)
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText(snapshot.comfortMessage, card.centerX(), card.centerY(), message)
+        val text = TextUtils.ellipsize(snapshot.latestNote, TextPaint(message), card.width() * 0.82f, TextUtils.TruncateAt.END).toString()
+        val baseline = card.centerY() - (message.descent() + message.ascent()) / 2f
+        canvas.drawText(text, card.centerX(), baseline, message)
     }
 
     private fun scheduleNextRefresh(context: Context) {
@@ -374,7 +405,7 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
     }
 
     private fun nextBoundaryAfter(now: Calendar): Calendar {
-        val candidates = listOf(6, 11, 17, 20).mapNotNull { hour ->
+        val candidates = listOf(6, 20).mapNotNull { hour ->
             (now.clone() as Calendar).apply {
                 set(Calendar.SECOND, 0)
                 set(Calendar.MILLISECOND, 0)
@@ -383,11 +414,20 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
             }.takeIf { it.after(now) }
         }.toMutableList()
 
+        listOf(11 to 11, 11 to 13, 23 to 11, 23 to 13).forEach { (hour, minute) ->
+            (now.clone() as Calendar).apply {
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                set(Calendar.HOUR_OF_DAY, hour)
+                set(Calendar.MINUTE, minute)
+            }.takeIf { it.after(now) }?.let(candidates::add)
+        }
+
         candidates += (now.clone() as Calendar).apply {
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
             add(Calendar.DAY_OF_YEAR, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.HOUR_OF_DAY, 6)
             set(Calendar.MINUTE, 0)
         }
 
@@ -430,6 +470,66 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
         val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
         val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
         return BatterySnapshot(level = level, isCharging = isCharging)
+    }
+
+    private fun loadOptionalDrawableBitmap(context: Context, drawableName: String): Bitmap? {
+        val resourceId = context.resources.getIdentifier(drawableName, "drawable", context.packageName)
+        if (resourceId == 0) return null
+        return BitmapFactory.decodeResource(context.resources, resourceId)
+    }
+
+    private fun loadFlutterAssetBitmap(context: Context, path: String): Bitmap? = runCatching {
+        // Flutter encodes spaces in packaged asset filenames (for example,
+        // "shooting star.jpeg" becomes "shooting%20star.jpeg").
+        val packagedPath = path.replace(" ", "%20")
+        context.assets.open("flutter_assets/$packagedPath").use(BitmapFactory::decodeStream)
+    }.getOrNull()
+
+    private fun drawCenterCrop(canvas: Canvas, source: Bitmap, width: Int, height: Int) {
+        val scale = max(width.toFloat() / source.width, height.toFloat() / source.height)
+        val drawnWidth = source.width * scale
+        val drawnHeight = source.height * scale
+        canvas.drawBitmap(source, null, RectF((width - drawnWidth) / 2f, (height - drawnHeight) / 2f, (width + drawnWidth) / 2f, (height + drawnHeight) / 2f), Paint(Paint.FILTER_BITMAP_FLAG))
+    }
+
+    private fun wrapText(text: String, paint: Paint, maxWidth: Float, maxLines: Int): List<String> {
+        val words = text.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val lines = mutableListOf<String>()
+        var current = ""
+        var index = 0
+        while (index < words.size && lines.size < maxLines) {
+            val candidate = listOf(current, words[index]).filter { it.isNotEmpty() }.joinToString(" ")
+            if (paint.measureText(candidate) <= maxWidth || current.isEmpty()) {
+                current = candidate
+                index++
+            } else {
+                lines += current
+                current = ""
+            }
+        }
+        if (current.isNotEmpty() && lines.size < maxLines) lines += current
+        if (index < words.size && lines.isNotEmpty()) {
+            val remaining = (listOf(lines.removeAt(lines.lastIndex)) + words.drop(index)).joinToString(" ")
+            lines += TextUtils.ellipsize(remaining, TextPaint(paint), maxWidth, TextUtils.TruncateAt.END).toString()
+        }
+        return lines.take(maxLines).ifEmpty { listOf("no notes yet...") }
+    }
+
+    private fun backgroundAssetPath(now: Calendar, isCharging: Boolean): String = when {
+        isShootingStarWindow(now) -> "assets/images/shooting star.jpeg"
+        now.get(Calendar.DAY_OF_MONTH) == 4 -> "assets/images/celebration.jpeg"
+        isCharging -> "assets/images/chargeeeee.jpeg"
+        now.get(Calendar.HOUR_OF_DAY) == 0 && now.get(Calendar.MINUTE) < 5 -> "assets/images/panda_count.jpeg"
+        now.get(Calendar.HOUR_OF_DAY) in 7..12 -> "assets/images/panda_day.jpg"
+        now.get(Calendar.HOUR_OF_DAY) in 13..15 -> "assets/images/afternoon.jpeg"
+        now.get(Calendar.HOUR_OF_DAY) in 16..21 -> "assets/images/panda_wish.jpeg"
+        else -> "assets/images/panda_night.jpg"
+    }
+
+    private fun isShootingStarWindow(now: Calendar): Boolean {
+        val hour = now.get(Calendar.HOUR_OF_DAY)
+        val minute = now.get(Calendar.MINUTE)
+        return (hour == 11 || hour == 23) && minute in 11..12
     }
 
     private fun defaultPandaLabel(phase: TwilightPhase, isCharging: Boolean): String = when {
@@ -506,6 +606,7 @@ class OurSpaceWidgetProvider : AppWidgetProvider() {
         val count: Int,
         val comfortMessage: String,
         val pandaLabel: String,
+        val latestNote: String,
         val batteryLevel: Int,
         val isCharging: Boolean,
         val surpriseIndex: Int,

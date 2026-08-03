@@ -6,6 +6,7 @@ import '../models/note.dart';
 import '../models/bucket_item.dart';
 import '../models/mood.dart';
 import '../services/firebase_service.dart';
+import '../services/widget_background_service.dart';
 import '../services/widget_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/twilight/twilight_state.dart';
@@ -23,14 +24,16 @@ class AppState extends ChangeNotifier {
   int batteryLevel = 100;
   bool isCharging = false;
   DateTime anniversary = DateTime(2026, 2, 4);
-  int daysTogether = 0;
+  int daysTogether = TwilightState.countTwilightsTogether(DateTime.now());
   Mood myMood = Mood.okay;
 
   List<Note> notes = [];
   List<BucketItem> bucketItems = [];
+  DateTime? partnerHugAt;
 
   StreamSubscription? _notesSub;
   StreamSubscription? _bucketSub;
+  StreamSubscription? _hugsSub;
   StreamSubscription<BatteryState>? _batteryStateSub;
   Timer? _midnightTimer;
   Timer? _themeTimer;
@@ -39,11 +42,17 @@ class AppState extends ChangeNotifier {
 
   bool get isPaired => _fb.isPaired;
 
+  bool get partnerSentHug {
+    final sentAt = partnerHugAt;
+    return sentAt != null && DateTime.now().difference(sentAt).inMinutes < 15;
+  }
+
   Future<void> init() async {
     try {
       await _fb.init();
       if (_fb.isPaired) {
         await _startListening();
+        await WidgetBackgroundService.registerPeriodicRefresh();
       }
       await _refreshTwilightState(pushWidget: true);
       _scheduleTwilightRefresh();
@@ -58,6 +67,7 @@ class AppState extends ChangeNotifier {
   Future<void> pair(String code) async {
     await _fb.joinSpace(code);
     await _startListening();
+    await WidgetBackgroundService.registerPeriodicRefresh();
     notifyListeners();
   }
 
@@ -77,17 +87,31 @@ class AppState extends ChangeNotifier {
       bucketItems = b;
       notifyListeners();
     });
+
+    _hugsSub?.cancel();
+    _hugsSub = _fb.hugsStream().listen((hugs) {
+      final partnerHugs = hugs.entries
+          .where((entry) => entry.key != _fb.currentUserId)
+          .toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      partnerHugAt = partnerHugs.isEmpty ? null : partnerHugs.first.value;
+      notifyListeners();
+    });
   }
 
   void _recalculateDays() {
     final now = DateTime.now();
     final start = DateTime(anniversary.year, anniversary.month, anniversary.day);
     final today = DateTime(now.year, now.month, now.day);
-    daysTogether = today.difference(start).inDays;
+    daysTogether = today.difference(start).inDays + 1;
   }
 
   void _pushWidget() {
-    WidgetService.update(twilight);
+    WidgetService.update(
+      twilight,
+      daysTogether: daysTogether,
+      latestNote: notes.isNotEmpty ? notes.first.text : 'no notes yet...',
+    );
   }
 
   Future<void> _refreshTwilightState({bool pushWidget = false}) async {
@@ -145,10 +169,13 @@ class AppState extends ChangeNotifier {
       _fb.toggleBucketItem(id, completed);
   Future<void> deleteBucketItem(String id) => _fb.deleteBucketItem(id);
 
+  Future<void> sendHug() => _fb.sendHug();
+
   @override
   void dispose() {
     _notesSub?.cancel();
     _bucketSub?.cancel();
+    _hugsSub?.cancel();
     _batteryStateSub?.cancel();
     _midnightTimer?.cancel();
     _themeTimer?.cancel();

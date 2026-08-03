@@ -42,9 +42,11 @@ dependencies:
   flutter_timezone: ^5.1.0
   timezone: ^0.9.4
   home_widget: ^0.7.0
+  workmanager: ^0.7.0
   flutter_animate: ^4.5.0
   battery_plus: ^6.0.0
   shared_preferences: ^2.3.2
+  audioplayers: ^6.8.1
 
 dev_dependencies:
   flutter_test:
@@ -69,6 +71,8 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon/app_icon.png
+    - assets/images/
+    - assets/moosik.mp3
 
   fonts:
     - family: BubbleBobble

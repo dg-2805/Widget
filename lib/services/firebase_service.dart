@@ -13,22 +13,36 @@ class FirebaseService {
 
   String? _spaceId;
   String? get spaceId => _spaceId;
+  String get currentUserId => _auth.currentUser!.uid;
 
   Future<void> init() async {
     if (_auth.currentUser == null) {
       await _auth.signInAnonymously();
     }
     final prefs = await SharedPreferences.getInstance();
-    _spaceId = prefs.getString('spaceId');
+    final storedSpaceId = prefs.getString('spaceId');
+    if (storedSpaceId == null || storedSpaceId.isEmpty) return;
+
+    try {
+      final snapshot = await _db.collection('spaces').doc(storedSpaceId).get();
+      if (snapshot.exists) {
+        _spaceId = storedSpaceId;
+      } else {
+        await prefs.remove('spaceId');
+      }
+    } on FirebaseException {
+      // Do not unpair merely because the phone is offline.
+      _spaceId = storedSpaceId;
+    }
   }
 
   bool get isPaired => _spaceId != null;
 
   Future<void> joinSpace(String rawCode) async {
     final code = rawCode.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '-');
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('spaceId', code);
-    _spaceId = code;
+    if (code.isEmpty) {
+      throw ArgumentError.value(rawCode, 'rawCode', 'Space code cannot be empty.');
+    }
 
     final ref = _db.collection('spaces').doc(code);
     final snap = await ref.get();
@@ -36,12 +50,25 @@ class FirebaseService {
       await ref.set({
         'createdAt': FieldValue.serverTimestamp(),
         'anniversary': Timestamp.fromDate(DateTime(2026, 2, 4)),
+        'memberIds': [currentUserId],
       });
+    } else {
+      await ref.set({
+        'memberIds': FieldValue.arrayUnion([currentUserId]),
+      }, SetOptions(merge: true));
     }
+    _spaceId = code;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('spaceId', code);
   }
 
-  DocumentReference<Map<String, dynamic>> get _spaceRef =>
-      _db.collection('spaces').doc(_spaceId);
+  DocumentReference<Map<String, dynamic>> get _spaceRef {
+    final spaceId = _spaceId;
+    if (spaceId == null || spaceId.isEmpty) {
+      throw StateError('No shared space is paired. Join or create a space before accessing shared data.');
+    }
+    return _db.collection('spaces').doc(spaceId);
+  }
 
   Stream<List<Note>> notesStream() {
     return _spaceRef
@@ -104,6 +131,25 @@ class FirebaseService {
 
   Future<void> deleteBucketItem(String id) async {
     await _spaceRef.collection('bucket_list').doc(id).delete();
+  }
+
+  // ---------------- Need a Hug ----------------
+  // One doc per user: spaces/{spaceId}/hugs/{uid}
+  Stream<Map<String, DateTime>> hugsStream() {
+    return _spaceRef.collection('hugs').snapshots().map((query) {
+      final hugs = <String, DateTime>{};
+      for (final doc in query.docs) {
+        final sentAt = doc.data()['sentAt'] as Timestamp?;
+        if (sentAt != null) hugs[doc.id] = sentAt.toDate();
+      }
+      return hugs;
+    });
+  }
+
+  Future<void> sendHug() async {
+    await _spaceRef.collection('hugs').doc(currentUserId).set({
+      'sentAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<DateTime> getAnniversary() async {

@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 
 enum TwilightPhase { morning, day, twilight, night }
 
-enum PandaMood { stretching, reading, sunset, sleeping, charging }
+enum PandaMood { counting, daytime, afternoon, wishing, sleeping, celebrating, charging }
+
+enum BackgroundScene { pandaCharging, celebration, pandaCount, pandaDay, afternoon, pandaWish, pandaNight }
 
 class TwilightState {
   static final anniversary = DateTime(2026, 2, 4);
@@ -54,10 +56,12 @@ class TwilightState {
 
   static DateTime nextBoundaryAfter(DateTime now) {
     final candidates = <DateTime>[
-      DateTime(now.year, now.month, now.day, 6),
-      DateTime(now.year, now.month, now.day, 11),
-      DateTime(now.year, now.month, now.day, 17),
-      DateTime(now.year, now.month, now.day, 20),
+      DateTime(now.year, now.month, now.day),
+      DateTime(now.year, now.month, now.day, 0, 5),
+      DateTime(now.year, now.month, now.day, 7),
+      DateTime(now.year, now.month, now.day, 13),
+      DateTime(now.year, now.month, now.day, 16),
+      DateTime(now.year, now.month, now.day, 22),
       DateTime(now.year, now.month, now.day + 1),
     ].where((candidate) => candidate.isAfter(now)).toList();
 
@@ -67,20 +71,39 @@ class TwilightState {
 
   PandaMood get pandaMood {
     if (isCharging) return PandaMood.charging;
-    return switch (phase) {
-      TwilightPhase.morning => PandaMood.stretching,
-      TwilightPhase.day => PandaMood.reading,
-      TwilightPhase.twilight => PandaMood.sunset,
-      TwilightPhase.night => PandaMood.sleeping,
+    return switch (backgroundScene) {
+      BackgroundScene.celebration => PandaMood.celebrating,
+      BackgroundScene.pandaCount => PandaMood.counting,
+      BackgroundScene.pandaDay => PandaMood.daytime,
+      BackgroundScene.afternoon => PandaMood.afternoon,
+      BackgroundScene.pandaWish => PandaMood.wishing,
+      BackgroundScene.pandaNight => PandaMood.sleeping,
+      BackgroundScene.pandaCharging => PandaMood.charging,
     };
+  }
+
+  BackgroundScene get backgroundScene => sceneFor(now, isCharging: isCharging);
+  String get backgroundAsset => backgroundScene.assetPath;
+
+  static BackgroundScene sceneFor(DateTime now, {required bool isCharging}) {
+    // The monthly celebration always takes precedence over the daily scene.
+    if (now.day == 4) return BackgroundScene.celebration;
+    if (isCharging) return BackgroundScene.pandaCharging;
+    if (now.hour == 0 && now.minute < 5) return BackgroundScene.pandaCount;
+    if (now.hour >= 7 && now.hour < 13) return BackgroundScene.pandaDay;
+    if (now.hour >= 13 && now.hour < 16) return BackgroundScene.afternoon;
+    if (now.hour >= 16 && now.hour < 22) return BackgroundScene.pandaWish;
+    return BackgroundScene.pandaNight;
   }
 
   String get pandaLabel {
     return switch (pandaMood) {
-      PandaMood.stretching => 'Stretching',
-      PandaMood.reading => 'Reading',
-      PandaMood.sunset => 'Watching the sunset',
-      PandaMood.sleeping => 'Sleeping',
+      PandaMood.counting => 'Counting twilights',
+      PandaMood.daytime => 'Enjoying the day',
+      PandaMood.afternoon => 'Quiet afternoon',
+      PandaMood.wishing => 'Enjoying the evening',
+      PandaMood.sleeping => 'Cozy night',
+      PandaMood.celebrating => 'Another month together',
       PandaMood.charging => 'Holding a glowing star',
     };
   }
@@ -124,7 +147,7 @@ class TwilightState {
       TwilightPhase.morning => const Color(0xFFFFFCF8),
       TwilightPhase.day => const Color(0xFFFFFFFF),
       TwilightPhase.twilight => const Color(0xFFFFF3EE),
-      TwilightPhase.night => const Color(0xFF231E34),
+      TwilightPhase.night => const Color(0xFF355F95),
     };
   }
 
@@ -152,4 +175,16 @@ class TwilightState {
       TwilightPhase.night => const Color(0xFF92C8FF),
     };
   }
+}
+
+extension BackgroundSceneAsset on BackgroundScene {
+  String get assetPath => switch (this) {
+    BackgroundScene.pandaCharging => 'assets/images/panda_charging.jpeg',
+    BackgroundScene.celebration => 'assets/images/celebration.jpeg',
+    BackgroundScene.pandaCount => 'assets/images/panda_count.jpeg',
+    BackgroundScene.pandaDay => 'assets/images/panda_day.jpg',
+    BackgroundScene.afternoon => 'assets/images/afternoon.jpeg',
+    BackgroundScene.pandaWish => 'assets/images/panda_wish.jpeg',
+    BackgroundScene.pandaNight => 'assets/images/panda_night.jpg',
+  };
 }

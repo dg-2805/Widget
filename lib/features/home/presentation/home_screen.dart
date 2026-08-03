@@ -1,16 +1,57 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/widgets/cute_widgets.dart';
+import '../../../models/note.dart';
 import '../../../providers/app_state.dart';
 import '../../eyes/presentation/eyes_screen.dart';
 import '../../hug/presentation/need_a_hug_screen.dart';
+import '../../notes/presentation/notes_screen.dart';
 import '../../open_when/presentation/open_when_screen.dart';
+import '../../peace/presentation/peace_screen.dart';
+import 'notification_debug_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  Timer? _burstTimer;
+  bool _showMonthlyBurst = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showMonthlyBurstIfNeeded());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _showMonthlyBurstIfNeeded();
+  }
+
+  void _showMonthlyBurstIfNeeded() {
+    if (DateTime.now().day != 4 || !mounted) return;
+    _burstTimer?.cancel();
+    setState(() => _showMonthlyBurst = true);
+    _burstTimer = Timer(const Duration(milliseconds: 2200), () {
+      if (mounted) setState(() => _showMonthlyBurst = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _burstTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,34 +60,31 @@ class HomeScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: AnimatedContainer(
-        duration: const Duration(milliseconds: 700),
-        curve: Curves.easeOutCubic,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [twilight.backgroundTop, twilight.backgroundBottom],
-          ),
-        ),
-        child: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(18, 16, 18, 28),
+      body: Stack(
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 700),
+            curve: Curves.easeOutCubic,
+            color: Colors.transparent,
+            child: SafeArea(
+              child: ListView(
+            padding: const EdgeInsets.fromLTRB(18, 24, 18, 28),
             children: [
-              _Header(twilight: twilight),
-              const SizedBox(height: 14),
               RepaintBoundary(
                 child: _TwilightCalendarCard(
                   twilight: twilight,
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const NeedAHugScreen()),
-                  ),
+                  daysTogether: state.daysTogether,
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const NeedAHugScreen()),
+                    );
+                  },
                 ),
               ),
+              const SizedBox(height: 12),
+              _LatestNote(note: state.notes.isNotEmpty ? state.notes.first : null),
               const SizedBox(height: 14),
               _PandaCompanionCard(twilight: twilight),
-              const SizedBox(height: 14),
-              _TinySurpriseCard(twilight: twilight),
               const SizedBox(height: 18),
               _RouteGrid(
                 onEyesTap: () => Navigator.of(context).push(
@@ -55,57 +93,42 @@ class HomeScreen extends StatelessWidget {
                 onOpenWhenTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const OpenWhenScreen()),
                 ),
-                onHugTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const NeedAHugScreen()),
+                onHugTap: () async {
+                  if (context.mounted) {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const PeaceScreen()),
+                    );
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const NotificationDebugScreen()),
                 ),
+                icon: const Icon(Icons.bug_report_outlined),
+                label: const Text('Notification diagnostics (temporary)'),
               ),
             ],
           ),
         ),
       ),
-    );
-  }
-}
-
-class _Header extends StatelessWidget {
-  const _Header({required this.twilight});
-
-  final dynamic twilight;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Twilights Together',
-          style: theme.textTheme.headlineMedium?.copyWith(
-            fontWeight: FontWeight.w700,
-            letterSpacing: -1.2,
-          ),
-        ),
-        const SizedBox(height: 6),
-        AnimatedOpacity(
-          opacity: 1,
-          duration: const Duration(milliseconds: 450),
-          child: Text(
-            twilight.comfortMessage,
-            style: theme.textTheme.bodyLarge?.copyWith(
-              color: theme.colorScheme.onSurface.withOpacity(0.72),
-              height: 1.45,
-            ),
-          ),
-        ),
-      ],
-    );
+      if (_showMonthlyBurst) const Positioned.fill(child: _MonthlyEmojiBurst()),
+    ],
+  ),
+);
   }
 }
 
 class _TwilightCalendarCard extends StatelessWidget {
-  const _TwilightCalendarCard({required this.twilight, required this.onTap});
+  const _TwilightCalendarCard({
+    required this.twilight,
+    required this.daysTogether,
+    required this.onTap,
+  });
 
   final dynamic twilight;
+  final int daysTogether;
   final VoidCallback onTap;
 
   @override
@@ -150,18 +173,24 @@ class _TwilightCalendarCard extends StatelessWidget {
               ),
             ),
             Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Text(
-                  'Twilight Calendar',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: theme.colorScheme.onSurface.withOpacity(0.68),
-                    letterSpacing: 0.5,
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'SimiRik',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.favorite, color: Color(0xFFE53935), size: 22),
+                  ],
                 ),
                 const SizedBox(height: 14),
                 TweenAnimationBuilder<double>(
-                  key: ValueKey(twilight.twilightsTogether),
+                  key: ValueKey(daysTogether),
                   tween: Tween(begin: 0, end: 1),
                   duration: const Duration(milliseconds: 680),
                   curve: Curves.easeOutBack,
@@ -179,7 +208,7 @@ class _TwilightCalendarCard extends StatelessWidget {
                     );
                   },
                   child: Text(
-                    twilight.twilightsTogether.toString(),
+                    daysTogether.toString(),
                     style: theme.textTheme.displayLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                       letterSpacing: -4,
@@ -188,12 +217,12 @@ class _TwilightCalendarCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 AnimatedOpacity(
                   opacity: 1,
                   duration: const Duration(milliseconds: 500),
                   child: Text(
-                    twilight.subtitle,
+                    'twilights together',
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurface.withOpacity(0.65),
                     ),
@@ -244,56 +273,29 @@ class _PandaCompanionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final icon = switch (twilight.pandaMood.toString().split('.').last) {
-      'stretching' => Icons.self_improvement,
-      'reading' => Icons.menu_book,
-      'sunset' => Icons.wb_sunny_outlined,
-      'sleeping' => Icons.bedtime_outlined,
-      _ => Icons.star_rounded,
-    };
-
     return CuteCard(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(
-            'Current panda',
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: theme.colorScheme.onSurface.withOpacity(0.65),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: Image.asset(
+              twilight.backgroundAsset,
+              height: 165,
+              width: double.infinity,
+              fit: BoxFit.cover,
             ),
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      twilight.pandaLabel,
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        height: 1.15,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      twilight.isCharging
-                          ? 'Battery only changes the panda, never the theme.'
-                          : 'The theme stays rooted in the time of day.',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurface.withOpacity(0.7),
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 16),
-              _PandaOrb(icon: icon, color: twilight.accentColor),
-            ],
+          Text(
+            twilight.pandaLabel,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+              height: 1.15,
+            ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           AnimatedOpacity(
             opacity: 1,
             duration: const Duration(milliseconds: 450),
@@ -301,6 +303,7 @@ class _PandaCompanionCard extends StatelessWidget {
               twilight.isCharging
                   ? 'Charging with ${twilight.batteryLevel}% battery'
                   : '${twilight.batteryLevel}% battery',
+              textAlign: TextAlign.center,
               style: theme.textTheme.labelLarge?.copyWith(
                 color: theme.colorScheme.onSurface.withOpacity(0.58),
               ),
@@ -312,70 +315,37 @@ class _PandaCompanionCard extends StatelessWidget {
   }
 }
 
-class _PandaOrb extends StatelessWidget {
-  const _PandaOrb({required this.icon, required this.color});
+class _LatestNote extends StatelessWidget {
+  const _LatestNote({required this.note});
 
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 108,
-      height: 108,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [color.withOpacity(0.30), color.withOpacity(0.05)],
-        ),
-      ),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Icon(icon, size: 44, color: color.withOpacity(0.92)),
-          // Pinterest Asset Needed
-          // Purpose: Panda companion illustration for the home screen
-          // Suggested Search: "soft watercolor panda companion"
-          // Asset Path: assets/images/panda/home_panda.png
-          // Aspect Ratio: 1:1
-        ],
-      ),
-    );
-  }
-}
-
-class _TinySurpriseCard extends StatelessWidget {
-  const _TinySurpriseCard({required this.twilight});
-
-  final dynamic twilight;
+  final Note? note;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final surpriseIndex = twilight.twilightsTogether % 3;
-    final surpriseIcon = switch (surpriseIndex) {
-      0 => Icons.auto_awesome,
-      1 => Icons.waving_hand_outlined,
-      _ => Icons.local_florist_outlined,
-    };
-    final surpriseText = switch (surpriseIndex) {
-      0 => 'A shooting star drifts through the sky.',
-      1 => 'The panda gives a tiny wave.',
-      _ => 'A flower quietly blooms nearby.',
-    };
-
+    final noteText = note?.text ?? 'Tap to write a note for each other.';
     return CuteCard(
-      child: Row(
+      onTap: () => NotesScreen.openNoteEditor(context, existing: note),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      child: Column(
         children: [
-          Icon(surpriseIcon, color: twilight.accentColor),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              surpriseText,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withOpacity(0.75),
-                height: 1.4,
-              ),
+          Text(
+            'shared space...',
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: theme.colorScheme.onSurface.withOpacity(0.62),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            noteText,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyLarge?.copyWith(
+              color: theme.colorScheme.onSurface,
+              height: 1.25,
+              fontSize: 20,
             ),
           ),
         ],
@@ -391,7 +361,7 @@ class _RouteGrid extends StatelessWidget {
     required this.onOpenWhenTap,
   });
 
-  final VoidCallback onHugTap;
+  final Future<void> Function() onHugTap;
   final VoidCallback onEyesTap;
   final VoidCallback onOpenWhenTap;
 
@@ -408,35 +378,140 @@ class _RouteGrid extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 10),
+        _MissYouButton(onTap: onHugTap),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
               child: _RouteTile(
-                title: 'Need a Hug',
-                subtitle: 'Tap for the full-screen comfort moment.',
-                icon: Icons.favorite_border,
-                onTap: onHugTap,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _RouteTile(
-                title: 'Can I Borrow\nYour Eyes?',
+                title: 'cute reminders :)',
                 subtitle: 'A place for your affirmations.',
                 icon: Icons.visibility_outlined,
                 onTap: onEyesTap,
               ),
             ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _RouteTile(
+                title: 'Open When...',
+                subtitle: 'Simple letters for harder moments.',
+                icon: Icons.mail_outline,
+                onTap: onOpenWhenTap,
+              ),
+            ),
           ],
         ),
-        const SizedBox(height: 12),
-        _RouteTile(
-          title: 'Open When...',
-          subtitle: 'Simple letters for harder moments.',
-          icon: Icons.mail_outline,
-          onTap: onOpenWhenTap,
-        ),
       ],
+    );
+  }
+}
+
+class _MissYouButton extends StatelessWidget {
+  const _MissYouButton({required this.onTap});
+
+  final Future<void> Function() onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SizedBox(
+      width: double.infinity,
+      height: 112,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(24),
+        clipBehavior: Clip.antiAlias,
+        child: Ink.image(
+          image: const AssetImage('assets/images/background.jpeg'),
+          fit: BoxFit.cover,
+          child: InkWell(
+            onTap: () async {
+              await onTap();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.black.withOpacity(0.5),
+                    Colors.black.withOpacity(0.12),
+                  ],
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.favorite_rounded, color: theme.colorScheme.onPrimary),
+                  const SizedBox(width: 12),
+                  Text(
+                    'I miss you',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      color: theme.colorScheme.onPrimary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    Icons.arrow_forward_rounded,
+                    color: theme.colorScheme.onPrimary,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MonthlyEmojiBurst extends StatelessWidget {
+  const _MonthlyEmojiBurst();
+
+  @override
+  Widget build(BuildContext context) {
+    const emojis = [
+      '\u{1F496}',
+      '\u{2728}',
+      '\u{1F389}',
+      '\u{1F495}',
+      '\u{1F31F}',
+      '\u{1F338}',
+      '\u{1F497}',
+    ];
+    final random = Random(4);
+    return IgnorePointer(
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 1400),
+        curve: Curves.easeOutCubic,
+        builder: (context, progress, _) => Opacity(
+          opacity: (1 - progress).clamp(0.0, 1.0),
+          child: Stack(
+            children: [
+              for (var index = 0; index < emojis.length; index++)
+                Align(
+                  alignment: Alignment(
+                    -0.65 + (random.nextDouble() * 1.3),
+                    -0.1 + (random.nextDouble() * 0.5),
+                  ),
+                  child: Transform.translate(
+                    offset: Offset(
+                      (random.nextDouble() - 0.5) * 260 * progress,
+                      -80 * progress - (random.nextDouble() * 180 * progress),
+                    ),
+                    child: Transform.rotate(
+                      angle: (random.nextDouble() - 0.5) * progress,
+                      child: Text(
+                        emojis[index],
+                        style: const TextStyle(fontSize: 34),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

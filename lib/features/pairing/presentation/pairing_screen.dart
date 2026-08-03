@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -40,6 +42,11 @@ class _PairingScreenState extends State<PairingScreen> {
                       ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                       : const Text('Continue'),
                 ),
+                const SizedBox(height: 10),
+                TextButton(
+                  onPressed: _loading ? null : _createCode,
+                  child: const Text('Create a new shared code'),
+                ),
               ]),
             ),
           ),
@@ -51,7 +58,23 @@ class _PairingScreenState extends State<PairingScreen> {
   Future<void> _submit() async {
     if (_controller.text.trim().isEmpty) return;
     setState(() => _loading = true);
-    await context.read<AppState>().pair(_controller.text);
-    if (mounted) setState(() => _loading = false);
+    try {
+      await context.read<AppState>().pair(_controller.text);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _createCode() {
+    const words = ['amber', 'bloom', 'comet', 'daisy', 'ember', 'lunar', 'maple', 'panda', 'peach', 'river', 'starlight', 'velvet'];
+    final random = Random.secure();
+    _controller.text = '${words[random.nextInt(words.length)]}-${words[random.nextInt(words.length)]}-${100 + random.nextInt(900)}';
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 }

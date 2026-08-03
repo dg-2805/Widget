@@ -14,7 +14,9 @@ class AppTheme {
       onSecondary: state.onSurfaceColor,
       error: const Color(0xFFB3261E),
       onError: Colors.white,
-      surface: state.surfaceColor,
+      surface: state.phase == TwilightPhase.night
+          ? const Color(0xEE3A659E)
+          : state.surfaceColor,
       onSurface: state.onSurfaceColor,
     );
     final textTheme = ThemeData(brightness: brightness).textTheme

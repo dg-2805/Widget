@@ -7,10 +7,10 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:provider/provider.dart';
+//import 'package:provider/provider.dart';
 
-import 'package:our_space/main.dart';
-import 'package:our_space/providers/app_state.dart';
+//import 'package:our_space/main.dart';
+//import 'package:our_space/providers/app_state.dart';
 import 'package:our_space/core/widgets/cute_widgets.dart';
 
 class FakeAppState extends ChangeNotifier {
